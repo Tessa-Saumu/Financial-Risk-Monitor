@@ -26,3 +26,5 @@ database/*.db
 
 # Power BI (binary — optionally exclude)
 # dashboard/*.pbix
+
+fix_structure.sh
