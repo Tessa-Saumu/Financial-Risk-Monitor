@@ -1,0 +1,25 @@
+# Data ingestion
+yfinance
+requests
+
+# Data processing
+pandas
+numpy
+openpyxl
+
+# Forecasting
+prophet
+
+# Risk modelling
+scipy
+
+# Database
+# sqlite3 is part of Python stdlib — no install needed
+
+# Notebooks
+jupyter
+ipykernel
+
+# Utilities
+python-dotenv
+rich
