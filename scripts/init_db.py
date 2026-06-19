@@ -54,13 +54,13 @@ CREATE TABLE IF NOT EXISTS risk_scores (
 );
 
 CREATE TABLE IF NOT EXISTS forecasts (
-    forecast_date     TEXT NOT NULL,
+    date              TEXT NOT NULL,  -- Changed from target_date to match README
     ticker            TEXT NOT NULL,
-    target_date       TEXT NOT NULL,
+    forecast_date     TEXT NOT NULL,
     predicted_close   REAL,
     lower_bound       REAL,
     upper_bound       REAL,
-    PRIMARY KEY (forecast_date, ticker, target_date)
+    PRIMARY KEY (date, ticker, forecast_date) -- Updated PK to match
 );
 
 CREATE TABLE IF NOT EXISTS monte_carlo (
