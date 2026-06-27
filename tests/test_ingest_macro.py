@@ -28,7 +28,7 @@ import pytest
 import requests
 
 import config
-from ingest_macro import (
+from scripts.ingest_macro import (
     _check_gaps,
     _fetch_observations,
     _fetch_window,

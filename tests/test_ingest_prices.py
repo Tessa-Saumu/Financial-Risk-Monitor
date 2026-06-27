@@ -8,12 +8,7 @@ requires:
   2. HTTP / empty error — bad tickers are caught and logged without crashing.
   3. Upsert (re-run)    — a second run must not create duplicate rows.
   4. Abort gate         — RuntimeError when fewer than MIN_TICKERS_REQUIRED succeed.
-
-Why mock?
----------
-Unit tests must be deterministic and fast. By controlling what yfinance returns
-we can test OUR logic precisely — upsert SQL, window calculation, abort gate —
-without depending on Yahoo Finance availability or today's market data.
+  
 """
 import sqlite3
 from datetime import date, timedelta
@@ -23,7 +18,7 @@ import pandas as pd
 import pytest
 
 import config
-from ingest_prices import (
+from scripts.ingest_prices import (
     _fetch_window,
     _get_last_stored_date,
     _upsert_prices,
@@ -38,10 +33,16 @@ from ingest_prices import (
 @pytest.fixture()
 def db(tmp_path, monkeypatch):
     """
-    In-memory SQLite DB with the raw_prices table.
-    Patches sqlite3.connect so every call inside ingest_prices uses this DB.
+    Temporary SQLite DB with the raw_prices table.
+    Patches sqlite3.connect so every call inside ingest_prices uses this DB file.
     """
-    conn = sqlite3.connect(":memory:")
+    db_file = tmp_path / "test_database.db"
+    
+    # 1. Save the REAL function before we patch anything!
+    real_connect = sqlite3.connect
+    
+    # 2. Use the real function to setup our test's connection
+    conn = real_connect(db_file)
     conn.execute("""
         CREATE TABLE raw_prices (
             date    TEXT NOT NULL,
@@ -55,8 +56,16 @@ def db(tmp_path, monkeypatch):
         )
     """)
     conn.commit()
-    monkeypatch.setattr("ingest_prices.sqlite3.connect", lambda *a, **kw: conn)
+
+    # 3. Patch ingest_prices to use the REAL function, but force our temp file path
+    monkeypatch.setattr(
+        "scripts.ingest_prices.sqlite3.connect", 
+        lambda *a, **kw: real_connect(db_file)
+    )
+
     yield conn
+
+    # 4. Clean up
     conn.close()
 
 
@@ -163,24 +172,24 @@ class TestUpsertPrices:
 
 
 class TestDownloadTicker:
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_returns_dataframe_for_valid_ticker(self, mock_dl):
         mock_dl.return_value = _make_df()
         result = _download_ticker("AAPL", "2024-01-02", "2024-01-08")
         assert result is not None and not result.empty
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_returns_none_for_empty_dataframe(self, mock_dl):
         """yfinance silent-drop: empty DF must be treated as failure, not crash."""
         mock_dl.return_value = pd.DataFrame()
         assert _download_ticker("INVALID", "2024-01-02", "2024-01-08") is None
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_returns_none_on_network_exception(self, mock_dl):
         mock_dl.side_effect = ConnectionError("Network unreachable")
         assert _download_ticker("AAPL", "2024-01-02", "2024-01-08") is None
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_returns_none_for_missing_required_columns(self, mock_dl):
         mock_dl.return_value = pd.DataFrame({"random": [1, 2, 3]})
         assert _download_ticker("AAPL", "2024-01-02", "2024-01-08") is None
@@ -190,27 +199,27 @@ class TestDownloadTicker:
 
 
 class TestIngestPrices:
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_normal_case_populates_db(self, mock_dl, db):
         mock_dl.return_value = _large_df()
         ingest_prices()
         count = db.execute("SELECT COUNT(DISTINCT ticker) FROM raw_prices").fetchone()[0]
         assert count == len(config.TICKERS)
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_incremental_run_requests_delta_only(self, mock_dl, db):
         """If data exists up to 2024-06-01, the next call must start from 2024-06-02."""
         _upsert_prices(db, [("2024-06-01", "AAPL", 100, 105, 95, 102, 1_000_000)])
         mock_dl.return_value = _make_df(n=3, start="2024-06-03")
 
         # Patch TICKERS to just AAPL for simplicity
-        with patch("ingest_prices.TICKERS", ["AAPL"] * 5):  # 5 to beat abort gate
+        with patch("scripts.ingest_prices.TICKERS", ["AAPL"] * 5):  # 5 to beat abort gate
             ingest_prices()
 
         call_kwargs = mock_dl.call_args_list[0][1]
         assert call_kwargs["start"] == "2024-06-02"
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_rerun_does_not_create_duplicate_rows(self, mock_dl, db):
         mock_dl.return_value = _large_df()
         ingest_prices()
@@ -221,7 +230,7 @@ class TestIngestPrices:
 
         assert second == first, f"Row count grew from {first} to {second} on re-run"
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_failed_ticker_counted_but_others_succeed(self, mock_dl, db):
         """A bad ticker must not stop good ones from being written."""
         def side_effect(tickers, **kwargs):
@@ -230,7 +239,7 @@ class TestIngestPrices:
         mock_dl.side_effect = side_effect
         tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "JPM", "INVALID"]
 
-        with patch("ingest_prices.TICKERS", tickers):
+        with patch("scripts.ingest_prices.TICKERS", tickers):
             ingest_prices()
 
         bad_count = db.execute(
@@ -242,22 +251,22 @@ class TestIngestPrices:
         assert bad_count == 0
         assert good_count == 5
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_abort_gate_raises_when_too_few_succeed(self, mock_dl, db):
         """Fewer than MIN_TICKERS_REQUIRED must raise RuntimeError."""
         mock_dl.return_value = pd.DataFrame()
         few_tickers = ["FAKE1", "FAKE2", "FAKE3"]  # fewer than MIN_TICKERS_REQUIRED
 
-        with patch("ingest_prices.TICKERS", few_tickers):
+        with patch("scripts.ingest_prices.TICKERS", few_tickers):
             with pytest.raises(RuntimeError, match="minimum"):
                 ingest_prices()
 
-    @patch("ingest_prices.yf.download")
+    @patch("scripts.ingest_prices.yf.download")
     def test_http_error_case_counts_as_failure(self, mock_dl, db):
         """An exception from yfinance is treated as a failed ticker."""
         mock_dl.side_effect = Exception("SSL handshake failed")
         few_tickers = ["FAKE1", "FAKE2", "FAKE3"]
 
-        with patch("ingest_prices.TICKERS", few_tickers):
+        with patch("scripts.ingest_prices.TICKERS", few_tickers):
             with pytest.raises(RuntimeError):
                 ingest_prices()
