@@ -1,5 +1,5 @@
 """
-test_ingest_macro.py — unit tests for ingest_macro.py.
+test_scripts.ingest_macro.py — unit tests for scripts.ingest_macro.py.
 
 All requests.get calls are mocked so the suite runs offline and
 deterministically without a real FRED_API_KEY. Tests are organised around
@@ -49,12 +49,15 @@ def fake_api_key(monkeypatch):
 
 
 @pytest.fixture()
-def db(monkeypatch):
+def db(tmp_path, monkeypatch):
     """
-    In-memory SQLite DB with the raw_macro table (column name: indicator_value,
-    matching init_db.py). Patches sqlite3.connect inside ingest_macro.
+    Temporary SQLite DB with the raw_macro table.
+    Patches sqlite3.connect inside ingest_macro to use this test DB.
     """
-    conn = sqlite3.connect(":memory:")
+    db_file = tmp_path / "test_macro.db"
+    real_connect = sqlite3.connect
+
+    conn = real_connect(db_file)
     conn.execute("""
         CREATE TABLE raw_macro (
             date             TEXT NOT NULL,
@@ -64,7 +67,13 @@ def db(monkeypatch):
         )
     """)
     conn.commit()
-    monkeypatch.setattr("ingest_macro.sqlite3.connect", lambda *a, **kw: conn)
+    
+    # Notice the "scripts." prefix here!
+    monkeypatch.setattr(
+        "scripts.ingest_macro.sqlite3.connect", 
+        lambda *a, **kw: real_connect(db_file)
+    )
+    
     yield conn
     conn.close()
 
@@ -138,7 +147,7 @@ class TestFetchWindow:
 
 
 class TestFetchObservations:
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_normal_case_parses_values_as_float(self, mock_get):
         mock_get.return_value = _fred_response([_obs("2024-01-01", "5.33"), _obs("2024-02-01", "5.25")])
         result = _fetch_observations("FEDFUNDS", "key", "2024-01-01", "2024-02-01")
@@ -146,7 +155,7 @@ class TestFetchObservations:
         assert result[0] == {"date": "2024-01-01", "value": 5.33}
         assert isinstance(result[0]["value"], float)
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_drops_missing_dot_values(self, mock_get):
         """FRED uses '.' for unpublished data — these must be silently dropped."""
         mock_get.return_value = _fred_response([
@@ -158,7 +167,7 @@ class TestFetchObservations:
         assert len(result) == 2
         assert all(r["date"] != "2024-02-01" for r in result)
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_drops_non_numeric_values(self, mock_get):
         """Non-numeric strings must be skipped with a warning, not crash."""
         mock_get.return_value = _fred_response([
@@ -169,21 +178,21 @@ class TestFetchObservations:
         assert len(result) == 1
         assert result[0]["date"] == "2024-01-01"
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_http_400_raises_value_error(self, mock_get):
         """HTTP 400 = bad series ID → ValueError with helpful message."""
         mock_get.return_value = MagicMock(status_code=400)
         with pytest.raises(ValueError, match="400"):
             _fetch_observations("BAD_ID", "key", "2024-01-01", "2024-06-01")
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_http_401_raises_permission_error(self, mock_get):
         """HTTP 401 = bad API key → PermissionError."""
         mock_get.return_value = MagicMock(status_code=401)
         with pytest.raises(PermissionError, match="401"):
             _fetch_observations("FEDFUNDS", "bad_key", "2024-01-01", "2024-06-01")
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_fred_error_message_in_200_body_raises(self, mock_get):
         """FRED can return HTTP 200 with an error_message field — must raise."""
         mock = MagicMock()
@@ -193,14 +202,14 @@ class TestFetchObservations:
         with pytest.raises(ValueError, match="error"):
             _fetch_observations("FEDFUNDS", "key", "2024-01-01", "2024-06-01")
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_connection_error_raises_runtime_error(self, mock_get):
         """Network failure after retries → RuntimeError."""
         mock_get.side_effect = requests.exceptions.ConnectionError("No route to host")
         with pytest.raises(RuntimeError, match="connect"):
             _fetch_observations("FEDFUNDS", "key", "2024-01-01", "2024-06-01")
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_empty_observations_returns_empty_list(self, mock_get):
         mock_get.return_value = _fred_response([])
         result = _fetch_observations("FEDFUNDS", "key", "2024-01-01", "2024-01-31")
@@ -270,7 +279,7 @@ class TestCheckGaps:
 
 
 class TestIngestMacro:
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_normal_case_populates_db(self, mock_get, db):
         """All series succeed — DB has rows for every series."""
         mock_get.return_value = _fred_response(_monthly(n=24))
@@ -281,24 +290,24 @@ class TestIngestMacro:
             ).fetchone()[0]
             assert count == 24
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_incremental_run_requests_delta_only(self, mock_get, db):
         """Existing data triggers an incremental fetch starting the next day."""
         _upsert_macro(db, "FEDFUNDS", [{"date": "2024-06-01", "value": 5.33}])
         mock_get.return_value = _fred_response([_obs("2024-07-01", "5.25")])
 
-        with patch("ingest_macro.FRED_SERIES", ["FEDFUNDS"]):
+        with patch("scripts.ingest_macro.FRED_SERIES", ["FEDFUNDS"]):
             ingest_macro()
 
         params = mock_get.call_args[1]["params"]
         assert params["observation_start"] == "2024-06-02"
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_rerun_does_not_duplicate_rows(self, mock_get, db):
         """Running ingest_macro twice must not grow the row count."""
         mock_get.return_value = _fred_response(_monthly(n=12))
 
-        with patch("ingest_macro.FRED_SERIES", ["FEDFUNDS"]):
+        with patch("scripts.ingest_macro.FRED_SERIES", ["FEDFUNDS"]):
             ingest_macro()
             first = db.execute("SELECT COUNT(*) FROM raw_macro").fetchone()[0]
             ingest_macro()
@@ -306,7 +315,7 @@ class TestIngestMacro:
 
         assert second == first
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_http_error_case_triggers_abort_gate(self, mock_get, db):
         """HTTP 400 on any series must raise RuntimeError after the loop."""
         def side_effect(url, params=None, **kwargs):
@@ -319,7 +328,7 @@ class TestIngestMacro:
         with pytest.raises(RuntimeError, match="UNRATE"):
             ingest_macro()
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_missing_api_key_raises_before_any_request(self, mock_get, monkeypatch, db):
         """No HTTP call should be made if FRED_API_KEY is absent."""
         monkeypatch.delenv("FRED_API_KEY", raising=False)
@@ -327,7 +336,7 @@ class TestIngestMacro:
             ingest_macro()
         mock_get.assert_not_called()
 
-    @patch("ingest_macro.requests.get")
+    @patch("scripts.ingest_macro.requests.get")
     def test_response_parsing_rejects_non_numeric_values(self, mock_get, db):
         """
         A series that returns only non-numeric values (data quality issue) should
@@ -335,7 +344,7 @@ class TestIngestMacro:
         """
         mock_get.return_value = _fred_response([_obs("2024-01-01", "not_a_number")])
 
-        with patch("ingest_macro.FRED_SERIES", ["FEDFUNDS"]):
+        with patch("scripts.ingest_macro.FRED_SERIES", ["FEDFUNDS"]):
             with pytest.raises(RuntimeError):
                 ingest_macro()
 
