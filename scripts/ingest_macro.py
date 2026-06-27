@@ -20,6 +20,8 @@ import requests
 
 from config import DB_PATH, FRED_SERIES, MAX_MACRO_GAP_DAYS, PRICE_START_DATE
 
+from dotenv import load_dotenv; load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
