@@ -13,6 +13,8 @@ Additionally covers:
   - Gap detection (_check_gaps)
   - Missing API key (fail fast before any HTTP call)
   - Abort gate (RuntimeError when any series fails)
+  - Timeout exception raises RuntimeError after exhausting retries
+  - HTTP 429 triggers 60-second sleep and retries successfully
 
 Why mock?
 ---------
@@ -214,6 +216,36 @@ class TestFetchObservations:
         mock_get.return_value = _fred_response([])
         result = _fetch_observations("FEDFUNDS", "key", "2024-01-01", "2024-01-31")
         assert result == []
+
+    @patch("scripts.ingest_macro.requests.get")
+    def test_timeout_raises_runtime_error_after_retries(self, mock_get):
+        """
+        requests.Timeout on every attempt must raise RuntimeError, not hang
+        or surface the raw exception.  The Timeout branch is separate from
+        ConnectionError in _fetch_observations, so it needs its own test.
+        """
+        mock_get.side_effect = requests.exceptions.Timeout("read timed out")
+        with pytest.raises(RuntimeError, match="timed out"):
+            _fetch_observations("FEDFUNDS", "key", "2024-01-01", "2024-06-01")
+        # All retry attempts must have been consumed — no silent short-circuit.
+        assert mock_get.call_count == 3  # RETRY_ATTEMPTS
+
+    @patch("scripts.ingest_macro.time.sleep")
+    @patch("scripts.ingest_macro.requests.get")
+    def test_429_waits_then_retries_and_succeeds(self, mock_get, mock_sleep):
+        """
+        HTTP 429 must trigger a 60-second sleep and retry rather than raising.
+        If the retry returns 200, the observations are parsed and returned normally.
+        """
+        good_response = _fred_response([_obs("2024-01-01", "5.33")])
+        # First call: rate limited. Second call: success.
+        mock_get.side_effect = [MagicMock(status_code=429), good_response]
+
+        result = _fetch_observations("FEDFUNDS", "key", "2024-01-01", "2024-01-31")
+
+        assert len(result) == 1
+        assert result[0] == {"date": "2024-01-01", "value": 5.33}
+        mock_sleep.assert_called_once_with(60)
 
 
 # ── _upsert_macro ─────────────────────────────────────────────────────────────

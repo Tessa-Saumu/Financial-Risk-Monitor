@@ -8,7 +8,10 @@ requires:
   2. HTTP / empty error — bad tickers are caught and logged without crashing.
   3. Upsert (re-run)    — a second run must not create duplicate rows.
   4. Abort gate         — RuntimeError when fewer than MIN_TICKERS_REQUIRED succeed.
-  
+
+The incremental-fetch test uses five distinct tickers (two pre-seeded, three
+fresh) so every download call is a separate, independently assertable fetch
+rather than the same ticker being skipped as already-up-to-date.
 """
 import sqlite3
 from datetime import date, timedelta
@@ -208,16 +211,32 @@ class TestIngestPrices:
 
     @patch("scripts.ingest_prices.yf.download")
     def test_incremental_run_requests_delta_only(self, mock_dl, db):
-        """If data exists up to 2024-06-01, the next call must start from 2024-06-02."""
+        """
+        Each ticker with existing data must fetch from last_stored + 1 day;
+        tickers with no data must fetch from PRICE_START_DATE.
+
+        Uses five distinct tickers so every download call is a separate,
+        meaningful assertion — not the same ticker being skipped as up-to-date.
+        """
+        tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "JPM"]
+
+        # Seed two tickers with different last-stored dates; leave the rest empty.
         _upsert_prices(db, [("2024-06-01", "AAPL", 100, 105, 95, 102, 1_000_000)])
+        _upsert_prices(db, [("2024-03-15", "MSFT", 200, 205, 195, 202, 2_000_000)])
+
         mock_dl.return_value = _make_df(n=3, start="2024-06-03")
 
-        # Patch TICKERS to just AAPL for simplicity
-        with patch("scripts.ingest_prices.TICKERS", ["AAPL"] * 5):  # 5 to beat abort gate
+        with patch("scripts.ingest_prices.TICKERS", tickers):
             ingest_prices()
 
-        call_kwargs = mock_dl.call_args_list[0][1]
-        assert call_kwargs["start"] == "2024-06-02"
+        # Build a map of ticker → start arg used in each download call.
+        call_map = {c[1]["tickers"]: c[1]["start"] for c in mock_dl.call_args_list}
+
+        assert call_map["AAPL"] == "2024-06-02",  "AAPL: should fetch from day after last stored"
+        assert call_map["MSFT"] == "2024-03-16",  "MSFT: should fetch from day after last stored"
+        assert call_map["GOOGL"] == config.PRICE_START_DATE, "GOOGL: no history, should use config start"
+        assert call_map["AMZN"] == config.PRICE_START_DATE,  "AMZN: no history, should use config start"
+        assert call_map["JPM"] == config.PRICE_START_DATE,   "JPM: no history, should use config start"
 
     @patch("scripts.ingest_prices.yf.download")
     def test_rerun_does_not_create_duplicate_rows(self, mock_dl, db):
