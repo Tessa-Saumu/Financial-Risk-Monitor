@@ -8,7 +8,7 @@ day's comparison, and every downstream metric (vol, drawdown, VaR) is
 built on the resulting return series.
 
 Usage:
-    python scripts/compute_risk.py
+    python -m scripts.compute_risk 
 """
 import sqlite3
 
@@ -76,6 +76,41 @@ def _min_max_normalize(series: pd.Series) -> pd.Series:
     return (series - lo) / (hi - lo)
 
 
+def _connect(db_path: str) -> sqlite3.Connection:
+    """Open a SQLite connection with a longer lock-wait timeout.
+
+    SQLite allows only one writer at a time. The default Python sqlite3
+    timeout is 5 seconds; we extend it to 30s so a short-lived lock (e.g.
+    another process mid-write) has a real chance to clear before we give
+    up. If it's still locked after 30s, _raise_if_locked (called from
+    each function's except block) turns the raw error into something
+    that actually explains what to do.
+    """
+    return sqlite3.connect(db_path, timeout=30)
+
+
+def _raise_if_locked(exc: Exception, db_path: str) -> None:
+    """If `exc` is a SQLite/pandas 'database is locked' error, re-raise it
+    with an explanation of the likely cause and how to fix it.
+
+    A lock can surface on ANY statement inside a transaction — not just
+    the initial connect() — since SQLite defers acquiring the write lock
+    until it's actually needed. pandas.read_sql also wraps the underlying
+    sqlite3.OperationalError in its own DatabaseError, so we check the
+    message text rather than the exception type to catch both.
+    """
+    if "locked" in str(exc).lower():
+        raise sqlite3.OperationalError(
+            f"Could not write to '{db_path}' — the database is locked. "
+            "This usually means another program has it open (DB Browser "
+            "for SQLite, a Jupyter notebook, a VS Code SQLite viewer, "
+            "etc.). Close that connection and rerun. If nothing obvious "
+            "is open, check for a leftover .db-journal or -wal file next "
+            "to the database, which can indicate a previous run didn't "
+            "shut down cleanly."
+        ) from exc
+
+
 def compute_returns(db_path: str = DB_PATH) -> None:
     """Read raw_prices, compute per-ticker return/vol/drawdown metrics,
     and write the results to asset_returns.
@@ -84,8 +119,9 @@ def compute_returns(db_path: str = DB_PATH) -> None:
     rather than appending duplicates, so it's safe to call repeatedly as
     part of a refresh workflow.
     """
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
+        conn.execute("BEGIN")
         available_tickers = set(pd.read_sql("SELECT DISTINCT ticker FROM raw_prices", conn)["ticker"])
         missing = [t for t in TICKERS if t not in available_tickers]
         if missing:
@@ -155,6 +191,10 @@ def compute_returns(db_path: str = DB_PATH) -> None:
             print(f"compute_returns: WARNING — only {succeeded}/{len(TICKERS)} configured "
                   f"tickers were processed, below MIN_TICKERS_REQUIRED={MIN_TICKERS_REQUIRED}. "
                   "Downstream risk_scores and dashboard coverage will be incomplete.")
+    except Exception as e:
+        conn.rollback()
+        _raise_if_locked(e, db_path)
+        raise
     finally:
         conn.close()
 
@@ -178,10 +218,11 @@ def compute_risk_scores(db_path: str = DB_PATH) -> None:
     CVaR against another metric, since they're different units and scales.
 
     Iterates config.TICKERS, so a ticker that failed upstream
-    in compute_returns is skipped with a warning
+    in compute_returns is skipped with a warning.
     """
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
+        conn.execute("BEGIN")
         available_tickers = set(pd.read_sql("SELECT DISTINCT ticker FROM asset_returns", conn)["ticker"])
         missing = [t for t in TICKERS if t not in available_tickers]
         if missing:
@@ -266,6 +307,10 @@ def compute_risk_scores(db_path: str = DB_PATH) -> None:
             )
 
         conn.commit()
+    except Exception as e:
+        conn.rollback()
+        _raise_if_locked(e, db_path)
+        raise
     finally:
         conn.close()
 
@@ -280,8 +325,18 @@ def run_monte_carlo(db_path: str = DB_PATH, n_paths: int = 10_000) -> None:
         "Monte Carlo simulation will be handled in following Issue 4 (Implement Monte Carlo simulation)."
     )
 
-
 if __name__ == "__main__":
+    print("compute_risk.py — starting risk computation pipeline")
+ 
+    print("\n[1/2] Computing returns, volatility, and drawdown...")
     compute_returns()
+    print("      ✓ asset_returns populated")
+ 
+    print("\n[2/2] Computing VaR, CVaR, and combined risk scores...")
     compute_risk_scores()
-    run_monte_carlo()
+    print("      ✓ risk_scores populated")
+ 
+    print("\nPipeline completed successfully.")
+    print("Note: run_monte_carlo() is not yet implemented (Issue 4, Phase 3 "
+          "milestone) and is intentionally not called here. Calling it "
+          "directly will raise NotImplementedError until that issue lands.")
