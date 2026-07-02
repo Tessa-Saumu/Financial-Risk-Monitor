@@ -8,6 +8,9 @@ Covers the Phase 3 acceptance criteria:
   - 10,000 paths x 30 days completes in under 2 minutes on a single CPU
 Plus a couple of extras for production-grade coverage: weight
 renormalisation, single-ticker portfolios, and missing-ticker validation.
+
+Run with:
+    pytest tests/test_monte_carlo.py -v
 """
 import numpy as np
 import pandas as pd
