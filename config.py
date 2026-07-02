@@ -35,6 +35,20 @@ FORECAST_HORIZON_DAYS = 30
 # ── Monte Carlo ───────────────────────────────────────────────
 MONTE_CARLO_PATHS = 10_000
 
+# Portfolio weights used by run_monte_carlo(). None -> equal-weight across
+# whatever tickers actually have data in asset_returns at run time.
+# To pin specific weights,  keys not present in
+# asset_returns are ignored with a warning, remaining weights are
+# renormalised to sum to 1.0.
+PORTFOLIO_WEIGHTS = None
+
+# Simulated path is flagged breach_flag=1 if final_value falls below
+# initial_value * (1 - MONTE_CARLO_DRAWDOWN_THRESHOLD).
+MONTE_CARLO_DRAWDOWN_THRESHOLD = 0.20
+
+# Wall-clock ceiling (seconds) for a MONTE_CARLO_PATHS x FORECAST_HORIZON_DAYS
+MONTE_CARLO_RUNTIME_BUDGET_SECONDS = 120
+
 # ── Validation thresholds ─────────────────────────────────────
 # Minimum rows expected per ticker for a full load from PRICE_START_DATE
 MIN_ROWS_PER_TICKER = 1_000
