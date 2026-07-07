@@ -15,7 +15,15 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
-from config import DB_PATH, TICKERS, MIN_TICKERS_REQUIRED
+from config import (
+    DB_PATH,
+    TICKERS,
+    MIN_TICKERS_REQUIRED,
+    MONTE_CARLO_PATHS,
+    FORECAST_HORIZON_DAYS,
+    PORTFOLIO_WEIGHTS,
+    MONTE_CARLO_DRAWDOWN_THRESHOLD,
+)
 from models.risk_metrics import (
     daily_returns,
     rolling_volatility,
@@ -24,6 +32,7 @@ from models.risk_metrics import (
     conditional_var,
     combined_risk_score,
 )
+from models.monte_carlo.simulation import simulate
 
 # ── Local pipeline constants ──────────────────────────────────────────────
 
@@ -315,15 +324,112 @@ def compute_risk_scores(db_path: str = DB_PATH) -> None:
         conn.close()
 
 
-def run_monte_carlo(db_path: str = DB_PATH, n_paths: int = 10_000) -> None:
-    # Out of scope for this issue: the task checklist covers compute_returns
-    # and compute_risk_scores only. Monte Carlo portfolio simulation is a
-    # separate, larger piece of work (portfolio-level, not per-ticker) that
-    # belongs in its own issue/milestone.
-    raise NotImplementedError(
-        "run_monte_carlo is out of scope for Issue 3 (Risk Modelling) "
-        "Monte Carlo simulation will be handled in following Issue 4 (Implement Monte Carlo simulation)."
-    )
+def _resolve_portfolio_weights(available_tickers: list) -> dict:
+    """Resolve the weights to simulate with, given which tickers actually
+    have data in asset_returns right now.
+    """
+    if not available_tickers:
+        raise ValueError("No tickers with data in asset_returns — cannot build a portfolio.")
+
+    if PORTFOLIO_WEIGHTS is None:
+        equal_weight = 1.0 / len(available_tickers)
+        return {t: equal_weight for t in available_tickers}
+
+    configured = dict(PORTFOLIO_WEIGHTS)
+    missing = [t for t in configured if t not in available_tickers]
+    if missing:
+        print(f"run_monte_carlo: WARNING — PORTFOLIO_WEIGHTS references ticker(s) "
+              f"with no data in asset_returns, dropping: {missing}")
+
+    usable = {t: w for t, w in configured.items() if t in available_tickers}
+    if not usable:
+        raise ValueError(
+            "None of the tickers in config.PORTFOLIO_WEIGHTS have data in "
+            "asset_returns. Check PORTFOLIO_WEIGHTS or run compute_returns() first."
+        )
+
+    weight_sum = sum(usable.values())
+    return {t: w / weight_sum for t, w in usable.items()}
+
+
+def run_monte_carlo(
+    db_path: str = DB_PATH,
+    n_paths: int = MONTE_CARLO_PATHS,
+    horizon: int = FORECAST_HORIZON_DAYS,
+    initial_value: float = 100_000.0,
+) -> None:
+    """Run the Monte Carlo portfolio simulation from current asset_returns
+    history and write results to the monte_carlo table.
+    """
+    conn = _connect(db_path)
+    try:
+        long_returns = pd.read_sql(
+            "SELECT date, ticker, daily_return FROM asset_returns WHERE daily_return IS NOT NULL",
+            conn,
+        )
+        if long_returns.empty:
+            raise ValueError(
+                "asset_returns has no daily_return data — run compute_returns() first."
+            )
+
+        available_tickers = sorted(long_returns["ticker"].unique().tolist())
+        weights = _resolve_portfolio_weights(available_tickers)
+
+        wide_returns = long_returns.pivot_table(index="date", columns="ticker", values="daily_return")
+        wide_returns.index = pd.to_datetime(wide_returns.index)
+
+        result = simulate(
+            returns_df=wide_returns,
+            weights=weights,
+            n_paths=n_paths,
+            horizon=horizon,
+            initial_value=initial_value,
+            drawdown_threshold=MONTE_CARLO_DRAWDOWN_THRESHOLD,
+        )
+
+        conn.execute("BEGIN")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS monte_carlo (
+                run_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                portfolio_value REAL,
+                final_value REAL,
+                breach_flag INTEGER,
+                PRIMARY KEY (run_id, date)
+            )
+        """)
+        conn.execute("DELETE FROM monte_carlo")
+
+        out = result.copy()
+        out["date"] = pd.to_datetime(out["date"]).dt.strftime("%Y-%m-%d")
+        out.to_sql("monte_carlo", conn, if_exists="append", index=False)
+
+        conn.commit()
+
+        per_path = result.drop_duplicates(subset="run_id")
+        outcome_returns = per_path["final_value"] / initial_value - 1.0
+
+        median_final_value = per_path["final_value"].median()
+        var_95 = value_at_risk(outcome_returns, confidence=0.95)
+        cvar_95 = conditional_var(outcome_returns, confidence=0.95)
+        breach_probability = per_path["breach_flag"].mean()
+
+        print(f"run_monte_carlo: {n_paths:,} paths x {horizon}d, weights={weights}")
+        print(f"      median final_value : {median_final_value:,.2f}")
+        print(f"      VaR 95%            : {var_95:.4%}")
+        print(f"      CVaR 95%           : {cvar_95:.4%}")
+        print(f"      breach probability : {breach_probability:.4%}")
+
+        if not (-0.25 <= var_95 <= -0.05):
+            print(f"run_monte_carlo: WARNING — VaR 95% ({var_95:.4%}) is outside the "
+                  "plausible -5% to -25% range for a diversified equity portfolio. "
+                  "Check weights, horizon, and underlying return data.")
+    except Exception as e:
+        conn.rollback()
+        _raise_if_locked(e, db_path)
+        raise
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     print("compute_risk.py — starting risk computation pipeline")
@@ -332,11 +438,12 @@ if __name__ == "__main__":
     compute_returns()
     print("      ✓ asset_returns populated")
  
-    print("\n[2/2] Computing VaR, CVaR, and combined risk scores...")
+    print("\n[2/3] Computing VaR, CVaR, and combined risk scores...")
     compute_risk_scores()
     print("      ✓ risk_scores populated")
- 
+
+    print("\n[3/3] Running Monte Carlo portfolio simulation...")
+    run_monte_carlo()
+    print("      ✓ monte_carlo populated")
+
     print("\nPipeline completed successfully.")
-    print("Note: run_monte_carlo() is not yet implemented (Issue 4, Phase 3 "
-          "milestone) and is intentionally not called here. Calling it "
-          "directly will raise NotImplementedError until that issue lands.")
