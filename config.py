@@ -38,7 +38,9 @@ MONTE_CARLO_PATHS = 10_000
 # ── Validation thresholds ─────────────────────────────────────
 # Minimum rows expected per ticker for a full load from PRICE_START_DATE
 MIN_ROWS_PER_TICKER = 1_000
+
 # Minimum number of tickers that must succeed for the pipeline to continue
 MIN_TICKERS_REQUIRED = 5
+
 # Maximum allowed gap in days between consecutive macro observations
 MAX_MACRO_GAP_DAYS = 35
