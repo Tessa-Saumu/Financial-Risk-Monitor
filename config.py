@@ -17,6 +17,19 @@ TICKERS = [
     "BTC-USD", "ETH-USD",
 ]
 
+# Asset class per ticker. Used to (a) group tickers for the Prophet
+# changepoint_prior_scale cross-validation grid in
+# notebooks/03_prophet_tuning.ipynb, and (b) look up which tuned value to
+# apply per ticker in scripts/run_forecasts.py. Kept as an explicit mapping
+# rather than inferred from TICKERS' comment groupings above, since the
+# comments are only human-readable and shouldn't be parsed as data.
+ASSET_CLASS = {
+    "AAPL": "equity", "MSFT": "equity", "GOOGL": "equity",
+    "AMZN": "equity", "JPM": "equity",
+    "SPY": "etf", "QQQ": "etf", "TLT": "etf", "GLD": "etf",
+    "BTC-USD": "crypto", "ETH-USD": "crypto",
+}
+
 # ── FRED macro series ─────────────────────────────────────────
 FRED_SERIES = [
     "FEDFUNDS",   # Federal Funds Rate
@@ -31,6 +44,25 @@ PRICE_START_DATE = "2020-01-01"
 
 # ── Forecasting ───────────────────────────────────────────────
 FORECAST_HORIZON_DAYS = 30
+
+# Minimum rows of [ds, y] history required before a ticker is forecast.
+# Distinct from MIN_ROWS_PER_TICKER below, which gates ingestion
+# completeness (a full historical load from PRICE_START_DATE); 
+MIN_ROWS_FOR_FORECAST = 200
+
+# Width of the yhat_lower/yhat_upper uncertainty interval. Prophet's own
+# default is 0.80; 
+PROPHET_INTERVAL_WIDTH = 0.95
+
+# changepoint_prior_scale controls how flexible Prophet's piecewise-linear
+# trend is allowed to be at changepoints (Prophet's docs: default 0.05,
+# tune on a log scale roughly over [0.001, 0.5], via cross-validation —
+# treated as dataset-specific, not a universal constant). 
+CHANGEPOINT_PRIOR_SCALE_BY_ASSET_CLASS = {
+    "equity": 0.05,
+    "etf": 0.05,
+    "crypto": 0.05,
+}
 
 # ── Monte Carlo ───────────────────────────────────────────────
 MONTE_CARLO_PATHS = 10_000
