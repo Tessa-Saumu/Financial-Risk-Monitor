@@ -56,12 +56,12 @@ PROPHET_INTERVAL_WIDTH = 0.95
 
 # changepoint_prior_scale controls how flexible Prophet's piecewise-linear
 # trend is allowed to be at changepoints (Prophet's docs: default 0.05,
-# tune on a log scale roughly over [0.001, 0.5], via cross-validation —
+# tune on a log scale roughly over [0.001, 12.0], via cross-validation —
 # treated as dataset-specific, not a universal constant). 
 CHANGEPOINT_PRIOR_SCALE_BY_ASSET_CLASS = {
-    "equity": 0.05,
-    "etf": 0.05,
-    "crypto": 0.05,
+    "crypto": 2.0,
+    "equity": 0.5,
+    "etf": 0.1,
 }
 
 # ── Monte Carlo ───────────────────────────────────────────────
