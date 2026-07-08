@@ -1,11 +1,11 @@
 """
-verify_risk_acceptance_criteria.py — checks the Issue 3 & Issue 5 acceptance criteria
+verify_acceptance_criteria.py — checks the Issue 3 & Issue 5 acceptance criteria
 against whatever is currently in the real database. 
 
 Usage:
-    python -m scripts.verify_risk_acceptance_criteria              # Runs all checks
-    python -m scripts.verify_risk_acceptance_criteria --issue 3    # Runs only Issue 3 checks
-    python -m scripts.verify_risk_acceptance_criteria --issue 5    # Runs only Issue 5 checks
+    python -m scripts.verify_acceptance_criteria              # Runs all checks
+    python -m scripts.verify_acceptance_criteria --issue 3    # Runs only Issue 3 checks
+    python -m scripts.verify_acceptance_criteria --issue 5    # Runs only Issue 5 checks
 """
 import argparse
 import os
@@ -14,7 +14,7 @@ import sys
 
 import pandas as pd
 
-# Allow `python scripts/verify_risk_acceptance_criteria.py` to find config.py at
+# Allow `python scripts/verify_acceptance_criteria.py` to find config.py at
 # the project root, the same way compute_risk.py needs to be run as
 # `python -m scripts.compute_risk` (or with the root on PYTHONPATH) to find
 # it. This makes the direct-file invocation work too, since that's the more
