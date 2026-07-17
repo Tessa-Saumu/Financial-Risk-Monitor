@@ -40,6 +40,52 @@ def test_daily_returns_drops_first_nan():
 
 
 # ---------------------------------------------------------------------------
+# all-null close price series
+#
+# This is distinct from the "empty DataFrame" case already covered in
+# test_ingest_prices.py (TestDownloadTicker.test_returns_none_for_empty_dataframe).
+# A ticker can come back from raw_prices with real rows and a real date
+# index, but a `close` column that is entirely NaN -- e.g. a halted or
+# thinly-covered ticker where yfinance still returns placeholder rows.
+# That case isn't caught at the ingestion boundary at all; it lands
+# directly on daily_returns() (and, downstream, on rolling_volatility()
+# and max_drawdown(), which compute_returns() calls on the same series).
+# Pinning down what daily_returns does here matters because
+# pct_change() on an all-NaN series produces an all-NaN result with no
+# leading value to drop -- the existing drop-first-nan test doesn't
+# exercise that path, since its input has real prices to compute a
+# ratio from.
+# ---------------------------------------------------------------------------
+
+def test_daily_returns_all_null_prices_returns_all_nan_not_zero():
+    prices = pd.Series([np.nan, np.nan, np.nan])
+    returns = daily_returns(prices)
+    # pct_change() of NaN/NaN is NaN, not 0 -- an all-null input must not
+    # be silently coerced into a "flat, no-movement" 0% return series.
+    # Silently treating missing prices as 0% moves would understate risk
+    # for exactly the tickers most likely to be problematic.
+    assert len(returns) == len(prices) - 1
+    assert returns.isna().all()
+
+
+def test_daily_returns_all_null_prices_downstream_metrics_stay_nan_not_raise():
+    # rolling_volatility and max_drawdown are the two other functions
+    # compute_returns() runs on the same per-ticker price/return series.
+    # Neither should raise on all-null input -- they should propagate
+    # NaN, so an all-null ticker surfaces as NaN rows in asset_returns
+    # (visible, filterable) rather than crashing the whole per-ticker
+    # loop in compute_returns() or silently fabricating a numeric score.
+    prices = pd.Series([np.nan] * 10)
+    returns = daily_returns(prices)
+
+    vol = rolling_volatility(returns, window=5)
+    assert vol.isna().all()
+
+    dd = max_drawdown(prices)
+    assert dd.isna().all()
+
+
+# ---------------------------------------------------------------------------
 # rolling_volatility
 # ---------------------------------------------------------------------------
 
