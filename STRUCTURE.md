@@ -18,11 +18,11 @@ Financial-Risk-Monitor/
 ├── docs/                   # Schema diagram, refresh workflow, API setup
 ├── assets/                 # README images and Power BI screenshots
 ├── config.py               # Central configuration (tickers, paths, settings)
-├── run_agent.py            # (not used in this project — see scripts/)
 ├── requirements.txt        # Python dependencies
 ├── .env.example            # FRED API key template
 ├── .gitignore
 ├── README.md
+├── STRUCTURE.md            # this file
 └── Project Description.md
 ```
 
@@ -44,7 +44,7 @@ Run these scripts in order to refresh all data and model outputs. They form the 
 
 ## `models/` — ML Model Logic
 
-Reusable Python modules containing the statistical and ML logic. Scripts in `scripts/` call these — they are not run directly.
+Reusable Python modules containing the statistical and ML logic. Scripts in `scripts/` call these — they are not run directly. `models/`, `models/prophet/`, and `models/monte_carlo/` are each Python packages (an `__init__.py` in each, alongside the modules below).
 
 ### `models/risk_metrics.py`
 
@@ -82,6 +82,7 @@ Monte Carlo portfolio simulation. Called by `scripts/compute_risk.py`.
 | File | Purpose |
 |---|---|
 | `financial_risk.db` | The SQLite database file. Created by `scripts/init_db.py`. **Not committed to Git** (listed in `.gitignore` due to binary size) |
+| `financial_risk.db.bak` | Optional local backup of `financial_risk.db`, e.g. taken before a from-scratch pipeline re-run. **Not committed to Git** (`database/*.db.bak` in `.gitignore`) |
 
 ### Database Schema
 
@@ -91,7 +92,7 @@ Monte Carlo portfolio simulation. Called by `scripts/compute_risk.py`.
 | `raw_macro` | date, indicator_name, indicator_value | `ingest_macro.py` |
 | `asset_returns` | date, ticker, daily_return, rolling_7d_vol, rolling_30d_vol, drawdown | `compute_risk.py` |
 | `risk_scores` | date, ticker, var_95, cvar_95, volatility_score, drawdown_score, combined_risk_score | `compute_risk.py` |
-| `forecasts` | forecast_date, ticker, target_date, predicted_close, lower_bound, upper_bound | `run_forecasts.py` |
+| `forecasts` | date, ticker, forecast_date, predicted_close, lower_bound, upper_bound | `run_forecasts.py` |
 | `monte_carlo` | run_id, date, portfolio_value, final_value, breach_flag | `compute_risk.py` |
 
 ---
@@ -130,15 +131,19 @@ Jupyter notebooks used during development. Not part of the automated pipeline.
 
 | File | Purpose |
 |---|---|
-| `01_data_exploration.ipynb` | Initial inspection of raw price and macro data — distributions, date coverage, missing values |
-| `02_risk_metrics_dev.ipynb` | Interactive development and visualisation of VaR, CVaR, and combined risk score calculations |
-| `03_prophet_tuning.ipynb` | Prophet model experimentation — seasonality settings, changepoint tuning, confidence interval width |
-| `04_monte_carlo_analysis.ipynb` | Monte Carlo path visualisation — fan charts, final value histograms, breach probability sensitivity |
-| `05_dashboard_data_validation.ipynb` | Validates that database table outputs match what Power BI is displaying — catches stale refresh issues |
+| `01_data_exploration.ipynb` | Present in the repo but not used for any deliverable work across Issues #1–6 — currently a stub/placeholder, not documented output |
+| `02_risk_metrics_dev.ipynb` | Present in the repo but not used for any deliverable work across Issues #1–6 — currently a stub/placeholder, not documented output |
+| `03_prophet_tuning.ipynb` | The only notebook actually used — cross-validated `changepoint_prior_scale` per asset class (equity/etf/crypto) via CV grid search on MAPE; the resulting values feed `config.CHANGEPOINT_PRIOR_SCALE_BY_ASSET_CLASS`, used by `scripts/run_forecasts.py`. Full reasoning documented at the top of the notebook (see PR 5) |
+| `04_monte_carlo_analysis.ipynb` | Present in the repo but not used for any deliverable work across Issues #1–6 — currently a stub/placeholder, not documented output |
+| `05_dashboard_data_validation.ipynb` | Present in the repo but not used for any deliverable work across Issues #1–6 — currently a stub/placeholder, not documented output |
+
+> **Repo hygiene note:** the four stub notebooks above were never filled in with real analysis — only `03_prophet_tuning.ipynb` reflects actual work. Consider deleting the four stubs (or filling them in, if any still have value) before tagging `v1.0.0`, so the repo doesn't imply exploratory work that didn't happen. This is a decision for you, not something to resolve in documentation alone.
 
 ---
 
 ## `tests/` — Unit Tests
+
+`tests/` is a Python package (`__init__.py`, empty, present so pytest's default rootdir/import mode resolves cleanly).
 
 | File | Purpose |
 |---|---|
@@ -164,11 +169,11 @@ Jupyter notebooks used during development. Not part of the automated pipeline.
 
 | File | Purpose |
 |---|---|
-| `architecture_diagram.png` | Pipeline diagram (Yahoo Finance + FRED → SQLite → Models → Power BI) used in README |
 | `dashboard_overview.png` | Screenshot of the Portfolio Overview page |
 | `dashboard_risk.png` | Screenshot of the Risk Analysis page |
 | `dashboard_forecast.png` | Screenshot of the Forecast Page |
 | `dashboard_scenario.png` | Screenshot of the Scenario Explorer page |
+| `architecture_diagram.png` | Pipeline diagram (Yahoo Finance + FRED → SQLite → Models → Power BI) used in README |
 
 ---
 
@@ -179,6 +184,7 @@ Jupyter notebooks used during development. Not part of the automated pipeline.
 | `config.py` | Central configuration — edit `TICKERS`, `FRED_SERIES`, `DB_PATH`, `FORECAST_HORIZON_DAYS`, `MONTE_CARLO_PATHS` here. All scripts import from this file |
 | `requirements.txt` | Python dependencies: yfinance, requests, pandas, numpy, prophet, scipy, jupyter, python-dotenv |
 | `.env.example` | Template for `FRED_API_KEY` — copy to `.env` and fill in your key |
-| `.gitignore` | Excludes `__pycache__`, `.env`, `.ipynb_checkpoints`, and `database/*.db` |
+| `.gitignore` | Excludes `__pycache__/`, `.env`, `.ipynb_checkpoints/`, `database/*.db`, `database/*.db.bak`, and standard OS/venv/build clutter |
 | `README.md` | Project overview, quickstart, architecture diagram, data refresh workflow, and dashboard screenshots |
+| `STRUCTURE.md` | This file — reference guide for every folder and file in the repository |
 | `Project Description.md` | Full problem statement, objectives, deliverables, technical constraints, and out-of-scope items |
