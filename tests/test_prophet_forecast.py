@@ -105,6 +105,31 @@ class TestFitAndForecastInputValidation:
         fc = fit_and_forecast(df, horizon=7, freq="D")
         assert len(fc) == 7
 
+    def test_fewer_than_200_rows_still_produces_valid_forecast(self):
+        # The <200-row "skip gracefully" behaviour documented in PR 5 is
+        # implemented in run_forecasts() (the orchestration layer decides
+        # whether to call fit_and_forecast() at all, based on row count)
+        # -- test_thin_ticker_is_skipped_not_written below already covers
+        # that skip decision at the pipeline level.
+        #
+        # This test covers the model layer instead: fit_and_forecast()
+        # itself has no documented row-count guard the way it does for a
+        # missing column or NaN in y, and Prophet has no hard row
+        # minimum -- it just fits with less confidence on less data.
+        # "Should skip gracefully" only holds end-to-end if the function
+        # underneath the skip decision doesn't itself blow up when
+        # handed a short series (e.g. if a future caller changes the
+        # orchestration threshold). This pins down that fit_and_forecast()
+        # degrades to a still-valid forecast on thin data rather than
+        # raising or returning malformed output, independent of whatever
+        # row-count policy the caller applies.
+        df = _synthetic_business_day_series(n=60, seed=3)
+        fc = fit_and_forecast(df, horizon=HORIZON, freq="B")
+        assert len(fc) == HORIZON
+        assert not fc[["yhat", "yhat_lower", "yhat_upper"]].isna().any().any()
+        assert (fc["yhat_lower"] <= fc["yhat"]).all()
+        assert (fc["yhat"] <= fc["yhat_upper"]).all()
+
 
 # ── Layer 2: run_forecasts() pipeline test, against a real temp DB ─────
 
