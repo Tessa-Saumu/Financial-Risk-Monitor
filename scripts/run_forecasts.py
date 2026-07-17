@@ -21,10 +21,10 @@ from config import (
     CHANGEPOINT_PRIOR_SCALE_BY_ASSET_CLASS,
 )
 from models.prophet.forecast import fit_and_forecast
-# Reused rather than redefined — same '-USD' suffix convention used to
-# pick the annualisation factor in compute_risk.py. Keeping one
-# definition means both scripts stay in sync if the crypto ticker list
-# or naming convention ever changes.
+# Reused rather than redefined — compute_risk.py's _is_crypto_ticker()
+# is the single source of truth for crypto classification (backed by
+# config.ASSET_CLASS). Importing it here means this script and
+# compute_risk.py can't silently disagree on which tickers are crypto.
 from scripts.compute_risk import _connect, _raise_if_locked, _is_crypto_ticker
 
 # Any ticker whose most recent raw_prices row is older than this many
