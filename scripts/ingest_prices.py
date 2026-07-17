@@ -3,7 +3,7 @@ ingest_prices.py — pulls historical asset price data from Yahoo Finance
 via yfinance and writes OHLCV rows to the raw_prices SQLite table.
 
 Usage:
-    python scripts/ingest_prices.py
+    python -m scripts.ingest_prices
 """
 import logging
 import sqlite3

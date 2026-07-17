@@ -7,7 +7,7 @@ Tables created:
   risk_scores, forecasts, monte_carlo
 
 Usage:
-    python scripts/init_db.py
+    python -m scripts.init_db   
 """
 import sqlite3
 from config import DB_PATH

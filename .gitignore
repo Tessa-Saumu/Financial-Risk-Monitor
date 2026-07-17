@@ -23,6 +23,7 @@ Thumbs.db
 
 # Database (large binary — exclude from git)
 database/*.db
+database/*.db.bak
 
 # Power BI (binary — optionally exclude)
 # dashboard/*.pbix
