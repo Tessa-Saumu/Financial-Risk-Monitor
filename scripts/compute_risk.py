@@ -18,6 +18,7 @@ import pandas as pd
 from config import (
     DB_PATH,
     TICKERS,
+    ASSET_CLASS,
     MIN_TICKERS_REQUIRED,
     MONTE_CARLO_PATHS,
     FORECAST_HORIZON_DAYS,
@@ -47,17 +48,34 @@ MIN_VAR_OBSERVATIONS = 30
 
 
 def _is_crypto_ticker(ticker: str) -> bool:
-    """Identify 24/7-market tickers using the yfinance '-USD' suffix
-    convention (matches config.TICKERS: BTC-USD, ETH-USD, etc).
+    """Identify 24/7-market tickers using config.ASSET_CLASS.
 
-    This is a naming-convention check, not a hardcoded list, so it
-    self-extends if more crypto tickers are added to config.TICKERS later
-    without needing a second place to update.
-    
-    Flag if tickers like spot gold/silver XAU-USD are added in future 
-    implementations this logic must be revisited.
+    Previously this guessed crypto via the yfinance '-USD' suffix
+    convention. That was a narrower, second classification mechanism
+    living alongside config.ASSET_CLASS — which run_forecasts.py already
+    treats as the maintained source of truth for a ticker's asset class
+    (equity/etf/crypto), used there to pick the tuned changepoint_prior_scale.
+    Two independent "is this crypto?" checks in the same codebase is a
+    latent bug waiting to happen (e.g. a future crypto ticker that
+    doesn't happen to end in '-USD', or vice versa) — this was flagged
+    during the Phase 5 documentation pass and is fixed here by making
+    this function read the same config.ASSET_CLASS dict that
+    run_forecasts.py already relies on, rather than maintaining a second,
+    looser rule that could silently disagree with it.
+
+    Unlike the old suffix check, a ticker missing from config.ASSET_CLASS
+    is a real config gap (e.g. added to TICKERS but not ASSET_CLASS) —
+    surfaced with a warning and treated as non-crypto (252 periods/year)
+    rather than silently guessed at, since equities/ETFs are the more
+    common case and a wrong guess here would misstate every rolling
+    volatility and risk score computed for that ticker.
     """
-    return ticker.upper().endswith("-USD")
+    asset_class = ASSET_CLASS.get(ticker)
+    if asset_class is None:
+        print(f"compute_risk: WARNING — '{ticker}' not found in config.ASSET_CLASS, "
+              f"defaulting to non-crypto (252 periods/year) for annualisation")
+        return False
+    return asset_class == "crypto"
 
 
 def _periods_per_year(ticker: str) -> int:
