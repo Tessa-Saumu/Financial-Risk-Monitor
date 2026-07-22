@@ -40,6 +40,65 @@ def test_daily_returns_drops_first_nan():
 
 
 # ---------------------------------------------------------------------------
+# all-null close price series
+#
+# This is distinct from the "empty DataFrame" case already covered in
+# test_ingest_prices.py (TestDownloadTicker.test_returns_none_for_empty_dataframe).
+# A ticker can come back from raw_prices with real rows and a real date
+# index, but a `close` column that is entirely NaN -- e.g. a halted or
+# thinly-covered ticker where yfinance still returns placeholder rows.
+# That case isn't caught at the ingestion boundary at all; it lands
+# directly on daily_returns() (and, downstream, on rolling_volatility()
+# and max_drawdown(), which compute_returns() calls on the same series).
+# Pinning down what daily_returns does here matters because
+# pct_change() on an all-NaN series produces an all-NaN result with no
+# leading value to drop -- the existing drop-first-nan test doesn't
+# exercise that path, since its input has real prices to compute a
+# ratio from.
+# ---------------------------------------------------------------------------
+
+def test_daily_returns_all_null_prices_drops_all_rows():
+    # Confirmed against the real implementation: daily_returns() applies a
+    # blanket NaN-drop, not just a drop of pct_change()'s single leading
+    # NaN. On an all-null input every row is NaN, so every row is dropped
+    # -- the result is an empty Series, not a NaN-filled one of length
+    # len(prices) - 1. This is a meaningfully different (and arguably
+    # safer) behaviour than "propagate NaN downstream": an all-null
+    # ticker produces zero rows for the affected dates rather than a
+    # silently-NaN-filled column, which is easier to notice missing than
+    # to notice quietly wrong. Documented here so a future change to
+    # dropna() logic doesn't silently start propagating NaN instead
+    # without that shift being deliberate.
+    prices = pd.Series([np.nan, np.nan, np.nan])
+    returns = daily_returns(prices)
+    assert len(returns) == 0
+
+
+def test_daily_returns_all_null_prices_downstream_metrics_handle_empty_input():
+    # rolling_volatility and max_drawdown are the two other functions
+    # compute_returns() runs on the same per-ticker price/return series.
+    # Since daily_returns() drops every row on all-null input (per the
+    # test above), rolling_volatility receives an empty Series, not an
+    # all-NaN one of the original length. Neither function should raise
+    # on that empty input -- an all-null ticker should surface as zero
+    # rows in asset_returns for the affected dates, not crash the
+    # per-ticker loop in compute_returns().
+    prices = pd.Series([np.nan] * 10)
+    returns = daily_returns(prices)
+    assert len(returns) == 0
+
+    vol = rolling_volatility(returns, window=5)
+    assert len(vol) == 0
+
+    dd = max_drawdown(prices)
+    # max_drawdown operates on prices directly (not on daily_returns'
+    # output), so an all-null price series reaches it unfiltered --
+    # unlike the two assertions above, this one exercises max_drawdown's
+    # own handling of all-NaN input rather than daily_returns' dropna.
+    assert dd.isna().all()
+
+
+# ---------------------------------------------------------------------------
 # rolling_volatility
 # ---------------------------------------------------------------------------
 

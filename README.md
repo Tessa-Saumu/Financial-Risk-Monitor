@@ -6,34 +6,25 @@
 
 ## Problem Statement
 
-Investors and analysts monitoring multiple assets rarely have a single, unified view of portfolio risk — especially one that incorporates macroeconomic context alongside price behaviour. Raw price feeds are noisy, risk signals are scattered across tools, and forecasting is often done manually or not at all. This project builds an automated, end-to-end pipeline that collects market and economic data, applies financial ML models, and presents risk-ready insights in a refreshable Power BI dashboard.
+Investors and analysts monitoring multiple assets rarely have a single, unified view of
+portfolio risk — especially one that incorporates macroeconomic context alongside price
+behaviour. Raw price feeds are noisy, risk signals are scattered across tools, and forecasting
+is often done manually or not at all. Volatility, drawdown, tail-risk measures like VaR and
+CVaR, and forward-looking price outlooks each tend to live in a different spreadsheet or a
+different mental model, which makes it hard to answer a simple question — "how risky is my
+portfolio right now, and how would a rate shock change that?" — without stitching several
+sources together by hand.
 
----
-
-## Objectives
-
-1. Ingest historical asset price data from Yahoo Finance and macroeconomic indicators from FRED
-2. Store raw and processed data in a structured SQLite database
-3. Compute core financial risk metrics: returns, rolling volatility, drawdown, Value at Risk (VaR), and Conditional VaR (CVaR)
-4. Build a Prophet-based forecasting component per asset with 30-day outlook
-5. Run Monte Carlo portfolio simulations (10,000 paths) to model probabilistic risk scenarios
-6. Design a Power BI dashboard that refreshes from processed SQLite outputs and includes scenario what-if slicers
-
----
-
-## Expected Outcomes
-
-- Automated ingestion scripts for Yahoo Finance (yfinance) and FRED API
-- SQLite database with raw and processed financial tables
-- Risk scoring and Monte Carlo simulation pipeline in Python
-- Prophet forecasting model per asset with confidence intervals
-- Power BI dashboard (.pbix) with four pages:
-  - Portfolio Overview — risk heatmap, latest scores, sparklines
-  - Risk Analysis — rolling volatility, drawdown charts, VaR/CVaR breakdown
-  - Forecast Page — actual vs predicted prices with confidence bands
-  - Scenario Explorer — what-if slicers for interest rate and volatility shocks
-- Documented data refresh workflow (run Python scripts → refresh Power BI)
-- GitHub repository with README, schema diagram, screenshots, and setup instructions
+This project builds an automated, end-to-end pipeline that collects market and economic data,
+applies financial ML models, and presents risk-ready insights in a refreshable Power BI
+dashboard. It ingests OHLCV price history from Yahoo Finance and macroeconomic indicators from
+FRED into a structured SQLite database, computes a consistent set of risk metrics per asset
+(returns, rolling volatility, drawdown, VaR, CVaR, and a combined 0–1 risk score), generates a
+30-day Prophet forecast per asset with confidence bands, and runs a 10,000-path Monte Carlo
+portfolio simulation to model probabilistic breach scenarios. All of it lands in one database
+that a four-page Power BI dashboard refreshes from directly — including what-if scenario
+sliders for interest rate shocks and volatility multipliers — so the full picture is one
+`Refresh` click away, not a manual reconciliation exercise.
 
 ---
 
@@ -44,6 +35,11 @@ Yahoo Finance (yfinance) ──┐
                            ├──▶ Python ETL ──▶ SQLite ──▶ ML Models ──▶ Power BI Desktop
 FRED API (requests)   ─────┘                            (Prophet + Monte Carlo)
 ```
+
+![Architecture Diagram](assets/architecture_diagram.png)
+
+See [`docs/schema_diagram.md`](docs/schema_diagram.md) for the full entity-relationship diagram
+showing how the six database tables relate and which script populates each one.
 
 ---
 
@@ -61,6 +57,47 @@ FRED API (requests)   ─────┘                            (Prophet + M
 
 ---
 
+## Quickstart
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/your-username/financial-risk-monitor
+cd financial-risk-monitor
+
+# 2. Create a virtual environment and install dependencies
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt  # confirm prophet, yfinance, and scipy install without errors
+
+# 3. Configure your FRED API key
+cp .env.example .env
+# Register at https://fred.stlouisfed.org/docs/api/api_key.html (see docs/fred_api_setup.md),
+# then add the key to .env: FRED_API_KEY=your_api_key_here
+
+# 4. Initialise the database (creates all six tables, empty)
+python scripts/init_db.py
+
+# 5. Run the four pipeline scripts, in order
+python -m scripts.ingest_prices     # Yahoo Finance -> raw_prices
+python -m scripts.ingest_macro      # FRED -> raw_macro
+python -m scripts.compute_risk      # asset_returns, risk_scores, monte_carlo
+python -m scripts.run_forecasts     # forecasts
+
+# 6. Open the dashboard
+# Open dashboard/financial_risk_monitor.pbix in Power BI Desktop and click Refresh.
+# (Requires the SQLite ODBC driver — see docs/data_refresh_workflow.md.)
+```
+
+### Verify the install
+
+```bash
+pytest tests/ -v
+```
+
+All tests should pass against a fresh database populated by the steps above.
+
+---
+
 ## Database Schema
 
 | Table | Key columns |
@@ -72,6 +109,8 @@ FRED API (requests)   ─────┘                            (Prophet + M
 | `forecasts` | date, ticker, forecast_date, predicted_close, lower_bound, upper_bound |
 | `monte_carlo` | run_id, date, portfolio_value, final_value, breach_flag |
 
+Full primary keys, relationships, and population order: [`docs/schema_diagram.md`](docs/schema_diagram.md).
+
 ---
 
 ## Data Refresh Workflow
@@ -82,25 +121,86 @@ FRED API (requests)   ─────┘                            (Prophet + M
 4. Run `python scripts/run_forecasts.py` — regenerates Prophet forecasts
 5. Open the `.pbix` file in Power BI Desktop → click **Refresh** → all visuals update
 
+Steps 1 and 2 can run in either order relative to each other, but both must finish before step
+3. Full detail on dependencies, timing, and the Scenario Explorer's DAX-only sliders is in
+[`docs/data_refresh_workflow.md`](docs/data_refresh_workflow.md).
+
 ---
 
-## Setup
+## Dashboard
 
-```bash
-git clone https://github.com/your-username/financial-risk-monitor
-cd financial-risk-monitor
-pip install -r requirements.txt
-cp .env.example .env        # add your FRED API key
-python scripts/ingest_prices.py
-python scripts/ingest_macro.py
-python scripts/compute_risk.py
-python scripts/run_forecasts.py
-```
+The Power BI dashboard has four pages, all reading from `database/financial_risk.db`:
 
-Then open `dashboard/financial_risk_monitor.pbix` in Power BI Desktop and refresh.
+### Page 1 — Portfolio Overview
+Risk heatmap (green/amber/red by `combined_risk_score`), 30-day close-price sparklines per
+ticker, and a latest-risk-score card grid (one card per ticker), all filterable by a ticker
+slicer.
+
+![Portfolio Overview](assets/dashboard_overview.png)
+
+### Page 2 — Risk Analysis
+Rolling 7d/30d volatility over time, a running-drawdown area chart, and a VaR 95% / CVaR 95%
+bar comparison per ticker.
+
+![Risk Analysis](assets/dashboard_risk.png)
+
+### Page 3 — Forecast Page
+Actual vs. predicted close price with a shaded 95% confidence band, a ticker dropdown, and a
+forecast-horizon label.
+
+![Forecast Page](assets/dashboard_forecast.png)
+
+### Page 4 — Scenario Explorer
+What-if sliders for Interest Rate Shock (±5%) and Volatility Multiplier (1×–3×) driving an
+Adjusted Risk Score card via DAX, plus a Monte Carlo P5/P50/P95 fan chart filterable by ticker
+and by breach outcome (True/False). Sliders recalculate instantly and do **not** re-run the
+Python simulation — the dashboard itself states this directly, to avoid the fan chart being
+misread as scenario-responsive.
+
+![Scenario Explorer](assets/dashboard_scenario.png)
+
+---
+
+## Known Limitations and Potential Extensions
+
+**Limitations:**
+- **Not live data.** Prices and macro indicators are only as current as the last manual run of
+  the ingestion scripts — there's no scheduler or streaming connection, so the dashboard reflects
+  whichever day's pipeline run it was last refreshed against, not the live market.
+- **`raw_macro` isn't wired into any risk calculation or dashboard visual yet.** It's ingested
+  and imported into the Power BI model, but no current metric or visual actually uses it — see
+  [`docs/schema_diagram.md`](docs/schema_diagram.md) for detail. It's ingested for future use, not
+  because anything downstream reads it today.
+- **Fixed asset universe.** `config.TICKERS` covers 11 assets across equities, ETFs, and crypto
+  (BTC-USD, ETH-USD) — there's no UI for a user to add their own tickers without editing config
+  and re-running the pipeline.
+- **Scenario Explorer is an approximation, not a re-simulation.** The Adjusted Risk Score under
+  a rate-shock/volatility-multiplier scenario is a DAX formula applied to the *already-computed*
+  base risk score, not a fresh Monte Carlo run under the shocked assumptions — genuinely
+  re-simulating under a scenario would require re-running `compute_risk.py` with different
+  input parameters, which the current sliders don't trigger.
+- **Prophet forecasts equities/ETFs and crypto on different calendars** (business days vs. every
+  calendar day respectively), so the actual date range covered by "30 rows" differs by asset
+  class — this is documented behaviour (see `docs/schema_diagram.md` and PR 5), not a bug, but
+  worth knowing if you're comparing forecast horizons across asset classes directly.
+
+**Potential extensions:**
+- **Live/scheduled data refresh** — a cron job or Task Scheduler entry running the four pipeline
+  scripts on a schedule (e.g. nightly), so the dashboard is at most a day stale without a manual
+  run.
+- **Additional asset classes** — commodities, bonds, or FX pairs would exercise the same
+  pipeline; the main work would be confirming `yfinance` coverage and each asset class's correct
+  annualisation factor (the way crypto's 365-day convention was handled for BTC-USD/ETH-USD).
+- **A Streamlit UI** as a lighter-weight alternative or complement to the Power BI dashboard —
+  useful for anyone who wants to view results without a Power BI Desktop license, and could also
+  serve as a place to let a user pick their own ticker universe or portfolio weights at runtime
+  rather than editing `config.py`.
+- **Wiring `raw_macro` into the risk model** — e.g. flagging elevated risk scores that coincide
+  with rate hikes or CPI surprises, which would give the dashboard's macro context an actual
+  analytical use rather than a table that's only ingested.
 
 ---
 
 ## Project Status
 
-In development — June/July 2026
+Released — v1.0.0 (July 2026). Originally developed June–July 2026.

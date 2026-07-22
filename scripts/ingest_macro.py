@@ -6,7 +6,7 @@ Indicators configured in config.py (FRED_SERIES):
   FEDFUNDS, CPIAUCSL, UNRATE, DGS10, and others.
 
 Usage:
-    python scripts/ingest_macro.py
+    python -m scripts.ingest_macro
 """
 import logging
 import os
