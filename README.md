@@ -1,53 +1,85 @@
 # Financial Risk Monitor
 
-I built this batch pipeline to bring scattered price data, risk calculations and forecasts into one Power BI report. Its strongest evidence is the ingestion and calculation work: handling failed downloads, storing data safely and checking the numbers.
+I built a batch pipeline that collects price data, calculates portfolio risk and prepares forecasts for a four-page Power BI report.
+
+## The problem
+
+Price history, risk calculations and forecasts were scattered across separate sources. I wanted one repeatable reporting path, with checks for failed downloads and incorrect calculations.
 
 ## What I built
 
-Python scripts collect price history from Yahoo Finance and economic indicators from FRED, the Federal Reserve's data service. SQLite stores the results in a local database. The pipeline calculates returns, volatility, falls from previous price peaks, and historical tail-risk measures. Prophet produces price forecasts, while a Monte Carlo simulation samples past returns to explore possible portfolio paths.
+Python ingestion scripts for Yahoo Finance and FRED (the Federal Reserve's economic data service), a six-table SQLite database, statistical risk calculations, Prophet price forecasts and a Power BI Desktop report. The configured universe contains 11 assets across equities, exchange-traded funds and cryptocurrencies. Macro indicators are collected but do not yet drive analytics.
 
-The report has four pages: portfolio overview, risk analysis, forecasts and scenario exploration. The current asset list contains 11 equities, exchange-traded funds and cryptocurrencies.
+## Architecture
 
-I implemented the pipeline and dashboard work attributed to Tessa-Saumu/Theresia Saumu in the repository history. Adeyeri Michael reviewed and merged changes; I do not claim sole participation in that review process.
+```mermaid
+flowchart LR
+    Y[Yahoo Finance] --> P[Price ingestion]
+    F[FRED] --> M[Macro ingestion]
+    P --> DB[(SQLite)]
+    M --> DB
+    DB --> R[Risk calculations and return sampling]
+    DB --> T[Prophet forecasts]
+    R --> DB
+    T --> DB
+    DB --> BI[Power BI Desktop via ODBC]
+```
 
-![Portfolio overview](assets/dashboard_overview.png)
+## How it works
 
-## What the checks show
+I initialize the database, fetch missing price and macro records, and write them using keys that prevent duplicate rows on repeated runs. Risk scripts calculate returns, volatility, drawdown and tail-risk measures. Forecasts and sampled portfolio paths are stored for the report to refresh through a SQLite database driver.
 
-On 13 October 2026, **98 offline tests passed** in an isolated Python 3.12 environment. They cover numerical calculations, repeated database writes and simulated download failures.
+## ML / AI methodology
 
-The small synthetic demo writes three prices twice and keeps exactly three rows. It checks returns of +10% and −10%, a 10% drawdown, and a −9% historical VaR (Value at Risk: a return threshold taken from the lower tail). These are deliberately simple arithmetic checks, not market-performance results.
+Prophet fits each asset's closing-price series and forecasts 30 future observations. Historical tuning uses rolling time windows, but there is no final held-out comparison against a simple forecast baseline. I therefore claim forecasting implementation, not demonstrated forecasting advantage.
 
-## Try it without API keys
+The risk calculations are statistical methods, not trained models. Monte Carlo here means repeatedly sampling historical returns to explore possible portfolio paths. VaR (Value at Risk) is a lower-tail return threshold; CVaR averages returns beyond that threshold. Neither measures guaranteed future loss.
 
-From the repository root:
+## Engineering
 
-```bash
+Incremental ingestion, repeated-run-safe writes, database transactions, logging, input validation, retries and service-failure tests exist. An offline CI workflow is committed; its presence does not establish a successful hosted run. The pipeline is manually run, without a scheduler or streaming service.
+
+## Results
+
+On 13 October 2026, **98 offline tests passed** in isolated Python 3.12. The synthetic demo writes three prices twice and retains exactly three rows. It checks +10% and −10% returns, a 10% drawdown and −9% historical VaR. These verify arithmetic and storage, not investment performance.
+
+## Demo
+
+![Historical Power BI portfolio overview](assets/dashboard_overview.png)
+
+This screenshot shows the Desktop report. There is no claimed live deployment. Run the offline demo below without API keys; a fresh live-data-to-Desktop refresh has not been verified.
+
+## Run locally
+
+The verified offline path uses Python 3.12 from the repository root:
+
+```powershell
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-python -m pip install -r requirements-lock.txt
-python -m pytest tests/ -v
-python -m scripts.offline_demo
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.\.venv\Scripts\python.exe -m pytest tests/ -v
+.\.venv\Scripts\python.exe -m scripts.offline_demo
 ```
 
-The tests replace external services with controlled responses; the demo creates and removes its own temporary database.
+For historical full-pipeline setup, see [FRED configuration](docs/fred_api_setup.md) and [refresh workflow](docs/data_refresh_workflow.md). That path needs network access, a FRED key, Power BI Desktop and a SQLite ODBC driver; it is outside the current verified offline run. Keep keys in an ignored local `.env` file using `.env.example` as the template.
 
-## Run the full pipeline
+## Repository structure
 
-Copy `.env.example` to `.env` and add your `FRED_API_KEY`. The [FRED setup guide](docs/fred_api_setup.md) explains how. Then run:
+- `scripts/`: database initialization, ingestion, analytics orchestration and offline demo.
+- `models/`: risk functions, return sampling and Prophet implementation.
+- `tests/`: numerical, database and mocked-service checks.
+- `dashboard/`, `assets/`, `docs/`: Desktop report, screenshots and refresh/schema documentation.
+- `config.py`: assets, calculation settings and database path.
 
-```bash
-python -m scripts.init_db
-python -m scripts.ingest_prices
-python -m scripts.ingest_macro
-python -m scripts.compute_risk
-python -m scripts.run_forecasts
-```
+## Limitations
 
-Open `dashboard/financial_risk_monitor.pbix` in Power BI Desktop and refresh it using the SQLite ODBC database driver. See the [refresh workflow](docs/data_refresh_workflow.md) and [database schema](docs/schema_diagram.md). Change the asset list in `config.py` if needed.
+Prices reflect the last manual run. Macro records do not influence current calculations or visuals. Forecast tuning is not final holdout validation. Dashboard sliders use DAX, Power BI's formula language, to adjust existing scores; they do not rerun Python simulations. There is no measured financial benefit or production deployment claim.
 
-## Limits
+## What I would improve next
 
-A fresh live-data-to-Desktop refresh was not verified in the October check. Prices reflect the last manual run; there is no live stream or scheduler. The economic indicators are stored but do not drive current calculations or visuals.
+1. Compare forecasts with a last-price baseline on a separate held-out period.
+2. Record a permitted live ingestion and Desktop refresh with reconciled totals.
+3. Connect macro indicators only after defining and testing their analytical use.
 
-The risk calculations and return-sampling simulation are statistical methods, not trained machine-learning models. Forecast results currently come from tuning checks, not a separate final test against a simple forecast baseline. The dashboard sliders adjust existing scores using DAX, Power BI's formula language; they do not rerun the Python simulation. None of this establishes investment performance or measured financial benefit.
+## My contribution
+
+Repository history attributes ingestion, storage, risk, forecasting and dashboard implementation to my Tessa-Saumu/Theresia Saumu identity. Adeyeri Michael reviewed and merged changes. I do not claim sole participation in that review process.
