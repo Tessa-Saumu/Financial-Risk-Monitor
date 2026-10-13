@@ -1,6 +1,6 @@
 # Financial Risk Monitor
 
-> An end-to-end financial analytics pipeline that ingests market and macroeconomic data, computes ML-driven risk metrics, runs Monte Carlo portfolio simulations, and serves a refreshable multi-page Power BI dashboard.
+> An end-to-end financial analytics pipeline that ingests market and macroeconomic data, computes historical statistical risk metrics, runs Monte Carlo portfolio simulations, and serves a refreshable multi-page Power BI dashboard.
 
 ---
 
@@ -16,7 +16,7 @@ portfolio right now, and how would a rate shock change that?" — without stitch
 sources together by hand.
 
 This project builds an automated, end-to-end pipeline that collects market and economic data,
-applies financial ML models, and presents risk-ready insights in a refreshable Power BI
+applies historical risk calculations and a Prophet forecasting model, and presents risk-ready insights in a refreshable Power BI
 dashboard. It ingests OHLCV price history from Yahoo Finance and macroeconomic indicators from
 FRED into a structured SQLite database, computes a consistent set of risk metrics per asset
 (returns, rolling volatility, drawdown, VaR, CVaR, and a combined 0–1 risk score), generates a
@@ -32,8 +32,8 @@ sliders for interest rate shocks and volatility multipliers — so the full pict
 
 ```
 Yahoo Finance (yfinance) ──┐
-                           ├──▶ Python ETL ──▶ SQLite ──▶ ML Models ──▶ Power BI Desktop
-FRED API (requests)   ─────┘                            (Prophet + Monte Carlo)
+                           ├──▶ Python ETL ──▶ SQLite ──▶ Analytics ──▶ Power BI Desktop
+FRED API (requests)   ─────┘                            (risk calculations, Prophet + bootstrap simulation)
 ```
 
 ![Architecture Diagram](assets/architecture_diagram.png)
@@ -61,13 +61,13 @@ showing how the six database tables relate and which script populates each one.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/financial-risk-monitor
-cd financial-risk-monitor
+git clone https://github.com/Tessa-Saumu/Financial-Risk-Monitor.git
+cd Financial-Risk-Monitor
 
 # 2. Create a virtual environment and install dependencies
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt  # confirm prophet, yfinance, and scipy install without errors
+pip install -r requirements-lock.txt  # confirm prophet, yfinance, and scipy install without errors
 
 # 3. Configure your FRED API key
 cp .env.example .env
@@ -75,7 +75,7 @@ cp .env.example .env
 # then add the key to .env: FRED_API_KEY=your_api_key_here
 
 # 4. Initialise the database (creates all six tables, empty)
-python scripts/init_db.py
+python -m scripts.init_db
 
 # 5. Run the four pipeline scripts, in order
 python -m scripts.ingest_prices     # Yahoo Finance -> raw_prices
@@ -91,10 +91,10 @@ python -m scripts.run_forecasts     # forecasts
 ### Verify the install
 
 ```bash
-pytest tests/ -v
+python -m pytest tests/ -v
 ```
 
-All tests should pass against a fresh database populated by the steps above.
+The automated tests mock external services and use temporary/synthetic data; they do not require live ingestion or a FRED key. Run `python -m scripts.offline_demo` for a compact synthetic SQLite upsert and risk-arithmetic demonstration.
 
 ---
 
@@ -115,10 +115,10 @@ Full primary keys, relationships, and population order: [`docs/schema_diagram.md
 
 ## Data Refresh Workflow
 
-1. Run `python scripts/ingest_prices.py` — pulls latest prices from Yahoo Finance into SQLite
-2. Run `python scripts/ingest_macro.py` — pulls latest FRED indicators into SQLite
-3. Run `python scripts/compute_risk.py` — recalculates risk metrics and Monte Carlo outputs
-4. Run `python scripts/run_forecasts.py` — regenerates Prophet forecasts
+1. Run `python -m scripts.ingest_prices` — pulls latest prices from Yahoo Finance into SQLite
+2. Run `python -m scripts.ingest_macro` — pulls latest FRED indicators into SQLite
+3. Run `python -m scripts.compute_risk` — recalculates risk metrics and Monte Carlo outputs
+4. Run `python -m scripts.run_forecasts` — regenerates Prophet forecasts
 5. Open the `.pbix` file in Power BI Desktop → click **Refresh** → all visuals update
 
 Steps 1 and 2 can run in either order relative to each other, but both must finish before step
@@ -204,3 +204,7 @@ misread as scenario-responsive.
 ## Project Status
 
 Released — v1.0.0 (July 2026). Originally developed June–July 2026.
+
+## Evidence boundary
+
+Offline tests and the synthetic demo verify bounded storage, failure handling and calculations. Full fresh Yahoo/FRED ingestion through Power BI Desktop refresh has not been reproduced in this repair. Forecast numbers are tuning-CV outputs, not baseline-relative holdout skill. Statistical risk calculations and historical-bootstrap Monte Carlo are not trained ML models. [Supporting audit and plan](SUPPORTING_AUDIT_PLAN.md).

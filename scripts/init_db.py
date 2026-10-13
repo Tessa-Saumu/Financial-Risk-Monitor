@@ -79,7 +79,7 @@ def init_db(db_path: str = DB_PATH) -> None:
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     conn.close()
-    print(f"✅ Database initialised at {db_path}")
+    print(f"Database initialised at {db_path}")
 
 
 if __name__ == "__main__":
