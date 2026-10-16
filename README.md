@@ -41,6 +41,8 @@ Incremental ingestion, repeated-run-safe writes, database transactions, logging,
 
 ## Results
 
+The project connects batch market-data ingestion, repeatable SQLite storage, risk calculations and forecasts to a **four-page Power BI report across 11 configured assets**. Incremental writes and failure handling support repeat runs; the offline checks verify storage behavior and risk arithmetic. Forecasting is implemented, but its advantage over a simple forecast baseline has not been established.
+
 On 13 October 2026, **98 offline tests passed** in isolated Python 3.12. The synthetic demo writes three prices twice and retains exactly three rows. It checks +10% and −10% returns, a 10% drawdown and −9% historical VaR. These verify arithmetic and storage, not investment performance.
 
 ## Demo
